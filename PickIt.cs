@@ -33,10 +33,13 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private readonly CachedValue<bool[,]> _inventorySlotsCache;
     private ServerInventory _inventoryItems;
     private SyncTask<bool> _pickUpTask;
+    private long _lastClick;
     private List<ItemFilter> _itemFilters;
     private bool _pluginBridgeModeOverride;
     private bool[,] InventorySlots => _inventorySlotsCache.Value;
     private readonly Stopwatch _sinceLastClick = Stopwatch.StartNew();
+    private Element UIHoverWithFallback => GameController.IngameState.UIHover switch { null or { Address: 0 } => GameController.IngameState.UIHoverElement, var s => s };
+    private bool OkayToClick => _sinceLastClick.ElapsedMilliseconds > Settings.PauseBetweenClicks;
 
     public PickIt()
     {
@@ -113,10 +116,34 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         if (playerInvCount is null or 0)
             return;
 
+        #region HoverPickit
+
+        if (Settings.HoverClickLooting.Value)
+        {
+            var hoverItemIcon = UIHoverWithFallback.AsObject<HoverItemIcon>();
+            if (hoverItemIcon != null && !GameController.IngameState.IngameUi.InventoryPanel.IsVisible &&
+                !Input.IsKeyDown(Keys.LButton))
+            {
+                if (hoverItemIcon.Item != null)
+                {
+                    var groundItem =
+                        GameController.IngameState.IngameUi.ItemsOnGroundLabels.FirstOrDefault(e =>
+                            e.Label.Address == hoverItemIcon.Address);
+                    if (groundItem?.ItemOnGround.DistancePlayer < 20f && OkayToClick)
+                    {
+                        _sinceLastClick.Restart();
+                        Input.Click(MouseButtons.Left);
+                    }
+                }
+            }
+        }
+
+        #endregion
+
         _inventoryItems = GameController.Game.IngameState.Data.ServerData.PlayerInventories[0].Inventory;
         DrawIgnoredCellsSettings();
         if (Input.GetKeyState(Settings.LazyLootingPauseKey)) DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
-
+        
         return;
     }
 
@@ -129,7 +156,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                 Graphics.DrawFrame(item.QueriedItem.ClientRect, Color.Violet, 5);
             }
         }
-
+        
         if (GetWorkMode() != WorkMode.Stop)
         {
             TaskUtils.RunOrRestart(ref _pickUpTask, RunPickerIterationAsync);
@@ -391,10 +418,10 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     private async SyncTask<bool> RunPickerIterationAsync()
     {
+        LogMessage("RunPickerIterationAsync");
         if (!GameController.Window.IsForeground()) return true;
 
         var pickUpThisItem = GetItemsToPickup(true).FirstOrDefault();
-
         var workMode = GetWorkMode();
         if (workMode == WorkMode.Manual || workMode == WorkMode.Lazy && ShouldLazyLoot(pickUpThisItem))
         {
@@ -472,7 +499,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             }
 
             var position = label.GetClientRect().ClickRandom(5, 3) + GameController.Window.GetWindowRectangleTimeCache.TopLeft;
-            if (_sinceLastClick.ElapsedMilliseconds > Settings.PauseBetweenClicks)
+            if (OkayToClick)
             {
                 if (!IsTargeted(item, label))
                 {
