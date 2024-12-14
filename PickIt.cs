@@ -118,7 +118,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
         #region HoverPickit
 
-        if (Settings.HoverClickLooting.Value)
+        if (Settings.AutoClickHoveredLootInRange.Value)
         {
             var hoverItemIcon = UIHoverWithFallback.AsObject<HoverItemIcon>();
             if (hoverItemIcon != null && !GameController.IngameState.IngameUi.InventoryPanel.IsVisible &&
