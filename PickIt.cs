@@ -117,27 +117,30 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             return;
 
         #region HoverPickit
-
         if (Settings.AutoClickHoveredLootInRange.Value)
         {
             var hoverItemIcon = UIHoverWithFallback.AsObject<HoverItemIcon>();
             if (hoverItemIcon != null && !GameController.IngameState.IngameUi.InventoryPanel.IsVisible &&
                 !Input.IsKeyDown(Keys.LButton))
             {
-                if (hoverItemIcon.Item != null)
+                if (hoverItemIcon.Item != null && OkayToClick)
                 {
                     var groundItem =
                         GameController.IngameState.IngameUi.ItemsOnGroundLabels.FirstOrDefault(e =>
                             e.Label.Address == hoverItemIcon.Address);
-                    if (groundItem?.ItemOnGround.DistancePlayer < 20f && OkayToClick)
+                    if (groundItem != null)
                     {
-                        _sinceLastClick.Restart();
-                        Input.Click(MouseButtons.Left);
+                        var doWePickThis = Settings.PickUpEverything || (_itemFilters?.Any(filter =>
+                            filter.Matches(new ItemData(groundItem.ItemOnGround, GameController))) ?? false);
+                        if (doWePickThis && groundItem?.ItemOnGround.DistancePlayer < 20f)
+                        {
+                            _sinceLastClick.Restart();
+                            Input.Click(MouseButtons.Left);
+                        }
                     }
                 }
             }
         }
-
         #endregion
 
         _inventoryItems = GameController.Game.IngameState.Data.ServerData.PlayerInventories[0].Inventory;
