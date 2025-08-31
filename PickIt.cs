@@ -31,6 +31,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private readonly CachedValue<List<LabelOnGround>> _doorLabels;
     private readonly CachedValue<LabelOnGround> _transitionLabel;
     private readonly CachedValue<bool[,]> _inventorySlotsCache;
+    private readonly CachedValue<int[,]> _inventorySlotsWithItemIds;
     private ServerInventory _inventoryItems;
     private SyncTask<bool> _pickUpTask;
     private bool _isCurrentlyPicking;
@@ -50,6 +51,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         _chestLabels = new TimeCache<List<LabelOnGround>>(UpdateChestList, 200);
         _doorLabels = new TimeCache<List<LabelOnGround>>(UpdateDoorList, 200);
         _transitionLabel = new TimeCache<LabelOnGround>(() => GetLabel(@"Metadata/MiscellaneousObjects/AreaTransition_Animate"), 200);
+        _inventorySlotsWithItemIds = new FrameCache<int[,]>(() => GetContainer2DArrayWithItemIds(_inventoryItems));
     }
 
     public override bool Initialise()
@@ -140,6 +142,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                     }
                 }
             }
+
         }
 
         _inventoryItems = GameController.Game.IngameState.Data.ServerData.PlayerInventories[0].Inventory;
@@ -148,7 +151,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     public override void Render()
     {
-        DrawIgnoredCellsSettings();
+        DrawInventoryCells();
+
         if (Settings.DebugHighlight)
         {
             foreach (var item in GetItemsToPickup(false))
@@ -202,41 +206,102 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             DebugWindow.LogMsg($"Debug item match: {matched}");
         }
     }
-
-    //TODO: Make function pretty
-    private void DrawIgnoredCellsSettings()
+    private void DrawInventoryCells()
     {
-        if (!Settings.ShowInventoryView.Value)
+        var settings = Settings.InventoryRender;
+        if (!settings.ShowInventoryView.Value)
             return;
 
-        var opened = true;
+        var ingameUi = GameController.Game.IngameState.IngameUi;
+        if (!settings.IgnoreFullscreenPanels && ingameUi.FullscreenPanels.Any(x => x.IsVisible))
+            return;
 
-        const ImGuiWindowFlags nonMoveableFlag = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoBackground |
-                                                 ImGuiWindowFlags.NoTitleBar |
-                                                 ImGuiWindowFlags.NoInputs |
-                                                 ImGuiWindowFlags.NoFocusOnAppearing;
+        if (!settings.IgnoreLargePanels && ingameUi.LargePanels.Any(x => x.IsVisible))
+            return;
 
-        ImGui.SetNextWindowPos(Settings.InventoryPos.Value);
-        if (ImGui.Begin($"{Name}##InventoryCellMap", ref opened,nonMoveableFlag))
-        {
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1);
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0,0));
+        if (!settings.IgnoreChatPanel && ingameUi.ChatTitlePanel.IsVisible)
+            return;
 
-            var numb = 0;
-            for (var i = 0; i < 5; i++)
-            for (var j = 0; j < 12; j++)
+        if (!settings.IgnoreLeftPanel && ingameUi.OpenLeftPanel.IsVisible)
+            return;
+
+        if (!settings.IgnoreRightPanel && ingameUi.OpenRightPanel.IsVisible)
+            return;
+
+        var windowSize = GameController.Window.GetWindowRectangleTimeCache;
+        var inventoryItemIds = _inventorySlotsWithItemIds.Value;
+        if (inventoryItemIds == null)
+            return;
+
+        var viewTopLeftX = (int)(windowSize.Width * (settings.Position.Value.X / 100f));
+        var viewTopLeftY = (int)(windowSize.Height * (settings.Position.Value.Y / 100f));
+
+        var cellSize = settings.CellSize;
+        var cellSpacing = settings.CellSpacing;
+        var outlineWidth = settings.ItemOutlineWidth;
+        var backerPadding = settings.BackdropPadding;
+
+        var inventoryRows = inventoryItemIds.GetLength(0);
+        var inventoryCols = inventoryItemIds.GetLength(1);
+        var gridWidth = inventoryCols * (cellSize + cellSpacing) - cellSpacing;
+        var gridHeight = inventoryRows * (cellSize + cellSpacing) - cellSpacing;
+        var backerRect = new RectangleF(
+            viewTopLeftX - backerPadding, viewTopLeftY - backerPadding, gridWidth + backerPadding * 2, gridHeight + backerPadding * 2);
+        Graphics.DrawBox(backerRect, settings.BackgroundColor.Value);
+
+        var itemBounds = new Dictionary<int, (int MinX, int MinY, int MaxX, int MaxY)>();
+        for (var y = 0; y < inventoryRows; y++)
+            for (var x = 0; x < inventoryCols; x++)
             {
-                var toggled = Convert.ToBoolean(InventorySlots[i, j]);
-                if (ImGui.Checkbox($"##{numb}IgnoredCells", ref toggled)) InventorySlots[i, j] = toggled;
+                var isOccupied = inventoryItemIds[y, x] > 0;
+                var cellColor = isOccupied ? settings.OccupiedSlotColor.Value : settings.UnoccupiedSlotColor.Value;
+                var cellX = viewTopLeftX + x * (cellSize + cellSpacing);
+                var cellY = viewTopLeftY + y * (cellSize + cellSpacing);
+                var cellRect = new RectangleF(cellX, cellY, cellSize, cellSize);
+                Graphics.DrawBox(cellRect, cellColor);
 
-                if (j != 11) ImGui.SameLine();
+                var itemId = inventoryItemIds[y, x];
+                if (itemId == 0) continue;
 
-                numb += 1;
+                if (itemBounds.TryGetValue(itemId, out var bounds))
+                {
+                    bounds.MinX = Math.Min(bounds.MinX, x);
+                    bounds.MinY = Math.Min(bounds.MinY, y);
+                    bounds.MaxX = Math.Max(bounds.MaxX, x);
+                    bounds.MaxY = Math.Max(bounds.MaxY, y);
+                    itemBounds[itemId] = bounds;
+                }
+                else
+                {
+                    itemBounds[itemId] = (x, y, x, y);
+                }
             }
 
-            ImGui.PopStyleVar(2);
+        foreach (var (_, (minX, minY, maxX, maxY)) in itemBounds)
+        {
+            var itemAreaX = viewTopLeftX + minX * (cellSize + cellSpacing);
+            var itemAreaY = viewTopLeftY + minY * (cellSize + cellSpacing);
+            var itemAreaWidth = (maxX - minX + 1) * (cellSize + cellSpacing) - cellSpacing;
+            var itemAreaHeight = (maxY - minY + 1) * (cellSize + cellSpacing) - cellSpacing;
 
-            ImGui.End();
+            var outerRect = new RectangleF(itemAreaX, itemAreaY, itemAreaWidth, itemAreaHeight);
+            DrawFrameInside(outerRect, outlineWidth, settings.ItemOutlineColor.Value);
+        }
+
+        return;
+
+        void DrawFrameInside(RectangleF outerRect, int thickness, Color color)
+        {
+            // A horrible workaround to the uneven values set by users resulting in not pixel perfect drawing
+            if (thickness <= 0) return;
+            // Top
+            Graphics.DrawBox(new RectangleF(outerRect.Left, outerRect.Top, outerRect.Width, thickness), color);
+            // Bottom
+            Graphics.DrawBox(new RectangleF(outerRect.Left, outerRect.Bottom - thickness, outerRect.Width, thickness), color);
+            // Left
+            Graphics.DrawBox(new RectangleF(outerRect.Left, outerRect.Top + thickness, thickness, outerRect.Height - thickness * 2), color);
+            // Right
+            Graphics.DrawBox(new RectangleF(outerRect.Right - thickness, outerRect.Top + thickness, thickness, outerRect.Height - thickness * 2), color);
         }
     }
 
@@ -548,5 +613,37 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             Input.SetCursorPos(position);
         }
         return await TaskUtils.CheckEveryFrame(() => IsTargeted(item, label), new CancellationTokenSource(60).Token);
+    }
+
+    private int[,] GetContainer2DArrayWithItemIds(ServerInventory containerItems)
+    {
+        var containerCells = new int[containerItems.Rows, containerItems.Columns];
+
+        try
+        {
+            var itemId = 1;
+            foreach (var item in containerItems.InventorySlotItems)
+            {
+                var itemSizeX = item.SizeX;
+                var itemSizeY = item.SizeY;
+                var inventPosX = item.PosX;
+                var inventPosY = item.PosY;
+                var startX = Math.Max(0, inventPosX);
+                var startY = Math.Max(0, inventPosY);
+                var endX = Math.Min(containerItems.Columns, inventPosX + itemSizeX);
+                var endY = Math.Min(containerItems.Rows, inventPosY + itemSizeY);
+                for (var y = startY; y < endY; y++)
+                for (var x = startX; x < endX; x++)
+                    containerCells[y, x] = itemId;
+                itemId++;
+            }
+        }
+        catch (Exception e)
+        {
+            // ignored
+            LogMessage(e.ToString(), 5);
+        }
+
+        return containerCells;
     }
 }
