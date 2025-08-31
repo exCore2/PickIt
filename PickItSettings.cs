@@ -1,20 +1,21 @@
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
+using System.Numerics;
 using System.Windows.Forms;
 using ExileCore2.Shared.Attributes;
 using ExileCore2.Shared.Interfaces;
 using ExileCore2.Shared.Nodes;
 using ImGuiNET;
 using Newtonsoft.Json;
-using System.Numerics;
 
 namespace PickIt;
 
 public class PickItSettings : ISettings
 {
     public ToggleNode Enable { get; set; } = new(false);
-    public ToggleNode ShowInventoryView { get; set; } = new(true);
+    public InventoryRender InventoryRender { get; set; } = new InventoryRender();
     public RangeNode<Vector2> InventoryPos { get; set; } = new(new Vector2(0, 0), Vector2.Zero, new Vector2(4000, 4000));
     public HotkeyNode ProfilerHotkey { get; set; } = Keys.None;
     public HotkeyNode PickUpKey { get; set; } = Keys.F;
@@ -87,4 +88,24 @@ public class FilterNode
 public record PickitRule(string Name, string Location, bool Enabled)
 {
     public bool Enabled = Enabled;
+}
+
+[Submenu(CollapsedByDefault = false)]
+public class InventoryRender
+{
+    public ToggleNode ShowInventoryView { get; set; } = new(true);
+    public ToggleNode IgnoreFullscreenPanels { get; set; } = new ToggleNode(false);
+    public ToggleNode IgnoreLargePanels { get; set; } = new ToggleNode(true);
+    public ToggleNode IgnoreChatPanel { get; set; } = new ToggleNode(false);
+    public ToggleNode IgnoreLeftPanel { get; set; } = new ToggleNode(true);
+    public ToggleNode IgnoreRightPanel { get; set; } = new ToggleNode(true);
+    public RangeNode<Vector2> Position { get; set; } = new(new Vector2(50f, 50f), Vector2.Zero, new Vector2(100f, 100f));
+    public RangeNode<int> BackdropPadding { get; set; } = new(1, 0, 100);
+    public RangeNode<int> CellSize { get; set; } = new(20, 1, 100);
+    public RangeNode<int> CellSpacing { get; set; } = new(1, 0, 100);
+    public RangeNode<int> ItemOutlineWidth { get; set; } = new(1, 0, 100);
+    public ColorNode BackgroundColor { get; set; } = new ColorNode(Color.FromArgb(50, 0, 0, 0));
+    public ColorNode ItemOutlineColor { get; set; } = new ColorNode(Color.FromArgb(255, 255, 255, 255));
+    public ColorNode OccupiedSlotColor { get; set; } = new ColorNode(Color.FromArgb(160,231,56,56));
+    public ColorNode UnoccupiedSlotColor { get; set; } = new ColorNode(Color.FromArgb(81, 130, 250, 130));
 }
